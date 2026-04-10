@@ -1,0 +1,25 @@
+.search-container {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.search-icon {
+  color: var(--text-secondary);
+}
+
+.search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  outline: none;
+  font-family: inherit;
+}
+
+.search-input::placeholder {
+  color: var(--text-secondary);
+}
