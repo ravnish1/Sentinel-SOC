@@ -1,16 +1,20 @@
-import { Routes, Route } from 'react-router-dom';
+import { Navigate, Routes, Route } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
-import './App.css'; // Let's remove this if we don't need it. But wait, I'll just use inline or modules. I'll delete App.css import and define structure.
+import ThreatLogsPage from './pages/ThreatLogsPage';
+import SettingsPage from './pages/SettingsPage';
+import './App.css';
 
 function App() {
   return (
-    <div className="flex-layout">
+    <div className="layout">
       <Sidebar />
-      <main className="main-content">
+      <main className="main">
         <Routes>
           <Route path="/" element={<Dashboard />} />
-          {/* Add more routes here later for Logs, Settings, etc. */}
+          <Route path="/logs" element={<ThreatLogsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
     </div>

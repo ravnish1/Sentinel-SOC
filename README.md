@@ -1,16 +1,73 @@
-# React + Vite
+# Cyber Threat Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Cyber Threat Dashboard is a React + Vite single-page application that presents a security operations center style interface for monitoring live threats, incident logs, and platform settings. It includes a command-center dashboard, a threat logs page with filtering, and a settings page for tuning response behavior and integrations.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Live threat overview with summary stats, attack volume sparkline, and entity tracking.
+- Incident stream with search, severity filters, and verdict filters.
+- Security settings panel for presets, alert routing, retention, and detection policy switches.
+- India-focused map visualization with active threat pins.
+- Mock threat engine that continuously updates stats, logs, and chart data for a dynamic feel.
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React 19
+- React Router DOM
+- Recharts
+- Lucide React icons
+- Vite
 
-## Expanding the ESLint configuration
+## Project Structure
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- `src/App.jsx` routes between the dashboard, threat logs, and settings pages.
+- `src/components/` contains the dashboard UI building blocks.
+- `src/pages/` contains the full-page views for logs and settings.
+- `src/hooks/useThreatEngine.js` generates the live mock telemetry.
+- `public/india-map.png` provides the map background used on the dashboard.
+
+## Requirements
+
+- Node.js 18 or newer
+- npm
+
+## Installation
+
+```bash
+npm install
+```
+
+## Running Locally
+
+Start the Vite development server:
+
+```bash
+npm run dev
+```
+
+Vite will print a local URL in the terminal, usually http://localhost:5173.
+
+## Build for Production
+
+```bash
+npm run build
+```
+
+This creates an optimized production bundle in the `dist/` directory.
+
+## Preview the Production Build
+
+```bash
+npm run preview
+```
+
+## What the App Shows
+
+- Dashboard: threat summary cards, a geospatial India map, a live activity feed, attack volume trends, and a threat entity table.
+- Threat Logs: searchable incident rows with severity and verdict filters plus action buttons.
+- Settings: configurable security presets, routing options, retention controls, and integration status cards.
+
+## Notes
+
+- The data in this project is mock data and refreshes in the browser to simulate a live security console.
+- If you change the map asset, keep the file at `public/india-map.png` or update the image path in `src/components/IndiaMap.jsx`.
