@@ -1,0 +1,40 @@
+# Implementation Plan for Backend Development
+
+## 1. Coding Agent Instructions (Backend)
+- **Set up project structure**: Ensure `src/` contains modules for API routes, services, and data models.
+- **Integrate Supabase client**: Add Supabase SDK initialization with environment variables (`SUPABASE_URL`, `SUPABASE_KEY`).
+- **Define data schemas**: Create TypeScript interfaces for threat entities (e.g., `Threat`, `Indicator`).
+- **Implement REST endpoints**:
+  - `GET /threats` – list all threats.
+  - `POST /threats` – create a new threat (validate payload).
+  - `GET /threats/:id` – retrieve a single threat.
+  - `PUT /threats/:id` – update threat details.
+  - `DELETE /threats/:id` – remove a threat.
+- **Authentication middleware**: Verify Supabase JWT on each request, attach user info to `req.context`.
+- **Error handling**: Centralize error responses with proper HTTP status codes.
+- **Testing**: Write unit tests for services and integration tests for API routes using a real Supabase test project (no mocks).
+- **Documentation**: Auto‑generate OpenAPI spec from route definitions.
+- **CI setup**: Add scripts to run lint, type‑check, and tests on each push.
+
+## 2. Human Configuration Checklist
+- **Supabase Account**: Create a Supabase project and note the `URL` and `anon/public` API key.
+- **Environment Variables**: Add the following to the local `.env` file (do not commit):
+  - `SUPABASE_URL=<your-supabase-url>`
+  - `SUPABASE_KEY=<your-supabase-key>`
+- **Auth Settings**: Enable email/password auth (or desired provider) in the Supabase dashboard.
+- **Database Schema**: Use Supabase SQL editor to run the initial schema migration for `threats` table.
+- **Local Development**:
+  - Install dependencies: `npm install`.
+  - Run the backend: `npm run dev`.
+- **Testing Credentials**: Create a test user in Supabase for automated tests.
+- **Deploy Configuration**: Ensure the deployment environment (e.g., Vercel, Render) has the same Supabase env vars.
+
+## 3. Checkpoints
+- [ ] Project scaffolding created.
+- [ ] Supabase client initialized.
+- [ ] Auth middleware implemented.
+- [ ] All CRUD endpoints functional.
+- [ ] Tests passing locally.
+- [ ] CI pipeline passes.
+- [ ] Documentation generated.
+- [ ] Deploy to staging.

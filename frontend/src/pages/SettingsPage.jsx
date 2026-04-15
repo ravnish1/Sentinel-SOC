@@ -1,6 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { BellRing, Copy, ShieldCheck, ShieldAlert, LockKeyhole, RotateCcw, Save, Settings2, Webhook, SlidersHorizontal, Cloud, Mail } from 'lucide-react';
+import { Copy, ShieldAlert, RotateCcw, Save, SlidersHorizontal } from 'lucide-react';
 import './SettingsPage.css';
+
+const STORAGE_KEY = 'soc.settings.v1';
+
+function createDemoApiKey() {
+  return `soc_${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 8)}`;
+}
 
 const presets = [
   {
@@ -42,11 +48,55 @@ const initialSwitches = {
   verboseAuditing: false,
 };
 
+function getDefaultSettings() {
+  return {
+    selectedPreset: 'hardened',
+    retentionDays: 30,
+    switches: initialSwitches,
+    alertRoute: 'slack',
+    emailDistribution: 'soc@sentinel.example',
+    slackChannel: '#threat-response',
+    webhookEndpoint: 'https://hooks.example.com/soc',
+    analystNotes: 'Default hardened policy for production traffic.',
+    apiKey: createDemoApiKey(),
+  };
+}
+
+function getInitialSettings() {
+  const defaults = getDefaultSettings();
+
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    return {
+      ...defaults,
+      ...parsed,
+      switches: {
+        ...initialSwitches,
+        ...(parsed.switches || {}),
+      },
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveSettings(snapshot) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+}
+
 const SettingsPage = () => {
-  const [selectedPreset, setSelectedPreset] = useState('hardened');
-  const [retentionDays, setRetentionDays] = useState(30);
-  const [switches, setSwitches] = useState(initialSwitches);
-  const [alertRoute, setAlertRoute] = useState('slack');
+  const initial = useMemo(() => getInitialSettings(), []);
+  const [selectedPreset, setSelectedPreset] = useState(initial.selectedPreset);
+  const [retentionDays, setRetentionDays] = useState(initial.retentionDays);
+  const [switches, setSwitches] = useState(initial.switches);
+  const [alertRoute, setAlertRoute] = useState(initial.alertRoute);
+  const [emailDistribution, setEmailDistribution] = useState(initial.emailDistribution);
+  const [slackChannel, setSlackChannel] = useState(initial.slackChannel);
+  const [webhookEndpoint, setWebhookEndpoint] = useState(initial.webhookEndpoint);
+  const [analystNotes, setAnalystNotes] = useState(initial.analystNotes);
+  const [apiKey, setApiKey] = useState(initial.apiKey);
   const [banner, setBanner] = useState('');
 
   const activePreset = presets.find((preset) => preset.id === selectedPreset) || presets[0];
@@ -61,17 +111,103 @@ const SettingsPage = () => {
   };
 
   const handleSave = () => {
+    saveSettings({
+      selectedPreset,
+      retentionDays,
+      switches,
+      alertRoute,
+      emailDistribution,
+      slackChannel,
+      webhookEndpoint,
+      analystNotes,
+      apiKey,
+    });
     setBanner(`Saved ${activePreset.name} profile with ${retentionDays}-day retention and ${alertRoute.toUpperCase()} routing.`);
     window.setTimeout(() => setBanner(''), 2800);
   };
 
   const handleReset = () => {
-    setSelectedPreset('hardened');
-    setRetentionDays(30);
-    setSwitches(initialSwitches);
-    setAlertRoute('slack');
+    const defaults = getDefaultSettings();
+    setSelectedPreset(defaults.selectedPreset);
+    setRetentionDays(defaults.retentionDays);
+    setSwitches(defaults.switches);
+    setAlertRoute(defaults.alertRoute);
+    setEmailDistribution(defaults.emailDistribution);
+    setSlackChannel(defaults.slackChannel);
+    setWebhookEndpoint(defaults.webhookEndpoint);
+    setAnalystNotes(defaults.analystNotes);
+    setApiKey(defaults.apiKey);
+    saveSettings({
+      selectedPreset: defaults.selectedPreset,
+      retentionDays: defaults.retentionDays,
+      switches: defaults.switches,
+      alertRoute: defaults.alertRoute,
+      emailDistribution: defaults.emailDistribution,
+      slackChannel: defaults.slackChannel,
+      webhookEndpoint: defaults.webhookEndpoint,
+      analystNotes: defaults.analystNotes,
+      apiKey: defaults.apiKey,
+    });
     setBanner('Settings restored to the hardened baseline.');
     window.setTimeout(() => setBanner(''), 2800);
+  };
+
+  const handleDuplicateProfile = async () => {
+    const snapshot = {
+      selectedPreset,
+      retentionDays,
+      switches,
+      alertRoute,
+      emailDistribution,
+      slackChannel,
+      webhookEndpoint,
+      analystNotes,
+    };
+    const text = JSON.stringify(snapshot, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      setBanner('Profile copied to clipboard as JSON.');
+    } catch {
+      const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `profile-${selectedPreset}-${Date.now()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setBanner('Clipboard unavailable. Profile exported as JSON file.');
+    }
+    window.setTimeout(() => setBanner(''), 2800);
+  };
+
+  const handleCopyApiKey = async () => {
+    try {
+      await navigator.clipboard.writeText(apiKey);
+      setBanner('API key copied to clipboard.');
+    } catch {
+      setBanner('Could not copy API key. Clipboard permission denied.');
+    }
+    window.setTimeout(() => setBanner(''), 2400);
+  };
+
+  const handleRotateApiKey = () => {
+    const nextKey = createDemoApiKey();
+    setApiKey(nextKey);
+    saveSettings({
+      selectedPreset,
+      retentionDays,
+      switches,
+      alertRoute,
+      emailDistribution,
+      slackChannel,
+      webhookEndpoint,
+      analystNotes,
+      apiKey: nextKey,
+    });
+    setBanner('API key rotated successfully.');
+    window.setTimeout(() => setBanner(''), 2600);
   };
 
   const switchItems = [
@@ -93,7 +229,7 @@ const SettingsPage = () => {
         </div>
         <div className="action-group">
           <button type="button" className="ui-button ghost" onClick={handleReset}><RotateCcw size={14} /> Reset</button>
-          <button type="button" className="ui-button ghost"><Copy size={14} /> Duplicate Profile</button>
+          <button type="button" className="ui-button ghost" onClick={handleDuplicateProfile}><Copy size={14} /> Duplicate Profile</button>
           <button type="button" className="ui-button primary" onClick={handleSave}><Save size={14} /> Save Changes</button>
         </div>
       </section>
@@ -200,15 +336,15 @@ const SettingsPage = () => {
             <div className="panel-body routing-grid">
               <label className="field-group">
                 <span>Email distribution</span>
-                <input className="ui-field" defaultValue="soc@sentinel.example" />
+                <input className="ui-field" value={emailDistribution} onChange={(event) => setEmailDistribution(event.target.value)} />
               </label>
               <label className="field-group">
                 <span>Slack channel</span>
-                <input className="ui-field" defaultValue="#threat-response" />
+                <input className="ui-field" value={slackChannel} onChange={(event) => setSlackChannel(event.target.value)} />
               </label>
               <label className="field-group">
                 <span>Webhook endpoint</span>
-                <input className="ui-field" defaultValue="https://hooks.example.com/soc" />
+                <input className="ui-field" value={webhookEndpoint} onChange={(event) => setWebhookEndpoint(event.target.value)} />
               </label>
               <label className="field-group">
                 <span>Primary route</span>
@@ -244,7 +380,7 @@ const SettingsPage = () => {
               </label>
               <label className="field-group">
                 <span>Analyst notes</span>
-                <textarea className="ui-textarea" rows="4" placeholder="Add change notes, rollout guidance, or compliance exceptions." defaultValue="Default hardened policy for production traffic."></textarea>
+                <textarea className="ui-textarea" rows="4" placeholder="Add change notes, rollout guidance, or compliance exceptions." value={analystNotes} onChange={(event) => setAnalystNotes(event.target.value)}></textarea>
               </label>
             </div>
           </article>
@@ -282,16 +418,16 @@ const SettingsPage = () => {
               <div className="secret-row">
                 <div>
                   <div className="secret-label">API key</div>
-                  <div className="secret-value mono">•••• •••• •••• f3e2</div>
+                  <div className="secret-value mono">{apiKey.slice(0, 6)}••••••••{apiKey.slice(-4)}</div>
                 </div>
-                <button type="button" className="ui-button ghost"><Copy size={14} /> Copy</button>
+                <button type="button" className="ui-button ghost" onClick={handleCopyApiKey}><Copy size={14} /> Copy</button>
               </div>
               <div className="secret-row">
                 <div>
                   <div className="secret-label">Rotation policy</div>
                   <div className="secret-value">Every 30 days</div>
                 </div>
-                <button type="button" className="ui-button ghost"><RotateCcw size={14} /> Rotate</button>
+                <button type="button" className="ui-button ghost" onClick={handleRotateApiKey}><RotateCcw size={14} /> Rotate</button>
               </div>
             </div>
           </article>

@@ -1,0 +1,136 @@
+# Rapid‑Prototype Backend Architecture for Cyber‑Threat Dashboard
+
+## Goal
+Create a **free, real‑time enabled** backend suitable for a hackathon / small CS project. The backend should:
+- Ingest threat data from publicly available feeds (e.g., OTX, AbuseIPDB, VirusTotal free tier, STIX/TAXII public feeds).
+- Store data in a lightweight DB (SQLite / PostgreSQL on free tier) and optionally cache recent events in Redis (free Docker image).
+- Expose a **REST API** for the existing React frontend to fetch initial data.
+- Push live updates to the UI via **WebSockets** (Socket.io) or **Server‑Sent Events**.
+- Keep the stack entirely JavaScript/TypeScript to stay consistent with the front‑end codebase.
+
+---
+
+## Recommended Stack (Free / Open‑Source)
+| Layer | Technology | Reason |
+|-------|------------|--------|
+| **Runtime** | **Node.js (v20+)** | Same language as the front‑end, huge ecosystem, zero‑cost. |
+| **Web Framework** | **Express** | Minimal boilerplate, easy to add middleware (CORS, body‑parser). |
+| **Real‑time** | **Socket.io** (WebSocket fallback) **or** **SSE** (native EventSource) | Socket.io handles reconnections, fallback transports – simplest for rapid prototyping. |
+| **Database** | **SQLite** (file based) **or** **PostgreSQL** (Free tier on Supabase/ElephantSQL) | SQLite works locally with no external service; PostgreSQL gives relational queries and scales on free cloud. |
+| **Cache / Pub‑Sub** | **Redis** (Docker image) | In‑memory store for recent events and Socket.io adapter (optional, but cheap). |
+| **Data Ingestion** | **Axios / node‑fetch** to call free public APIs (OTX, AbuseIPDB, VirusTotal Free) | No paid credentials needed; most services allow limited free calls per day. |
+| **Task Scheduler** | **node‑cron** (or setInterval) | Simple periodic polling of external feeds (e.g., every 5‑10 min). |
+| **Environment** | **Docker Compose** – containers for backend, redis, (optional) postgres | One‑command dev setup, works on any OS (including Windows). |
+| **Testing** | **Jest** (devDependency) | Quick unit tests for ingestion functions; not required for hackathon but nice to have. |
+
+---
+
+## High‑Level Architecture Diagram (textual)
+```
++-------------------+        HTTP(S)        +-------------------+
+|   Front‑end (React)  <-------------------|   Express API      |
+|   (Socket.io client) |   REST / WS  |   (server.js)      |
++-------------------+                     +----------+--------+
+                                                      |
+                               WebSocket (Socket.io) |
+                                                      v
+                                            +-------------------+
+                                            |   Socket.io Server |
+                                            +----------+--------+
+                                                       |
+                                 Publish new threat |  Subscribe to "threat" events
+                                                       v
+                                            +-------------------+
+                                            |   Redis (optional) |
+                                            +----------+--------+
+                                                       |
+                                   Store / Cache   |
+                                                       v
+                                            +-------------------+
+                                            |  SQLite / Postgres |
+                                            +-------------------+
+                                                       |
+                                   Periodic ingestion  |
+                                                       v
+                                            +-------------------+
+                                            |  Cron jobs (node‑cron) |
+                                            +-------------------+
+                                                       |
+                                 Call free public APIs |
+                                                       v
+                                            +-------------------+
+                                            |  External Threat Feeds |
+                                            +-------------------+
+```
+
+---
+
+## Core Backend Components
+1. **server.js** – entry point
+   - Initialise Express, enable CORS, JSON body parsing.
+   - Attach a Socket.io server.
+   - Define REST routes:
+     - `GET /api/threats` – return latest N threats (from DB).
+     - `POST /api/ingest` – webhook for manual feed pushes (optional).
+   - On server start, launch the **poller** (node‑cron) that fetches from external feeds.
+   - When new data is stored, emit `threatUpdate` via Socket.io to all connected clients.
+2. **db.js** – thin wrapper around SQLite (using `better-sqlite3` or `sqlite3` npm package) or PostgreSQL (`pg`).
+   - Helper functions: `init()`, `addThreat(threat)`, `getRecent(limit)`.
+3. **feeds/** – folder with modules for each external source:
+   - `otx.js`, `abuseipdb.js`, `virustotal.js` – each exports `fetchLatest()` returning an array of threat objects.
+   - Use free API keys (most services allow a quick signup for a limited key). Store keys in a `.env` file (not committed).
+4. **poller.js** – sets up a cron job (e.g., `*/5 * * * *` every 5 min) that:
+   - Calls each feed module, deduplicates by indicator hash, writes new entries to DB, and emits via Socket.io.
+5. **socketAdapter.js** (optional) – if using Redis, configure Socket.io's `adapter` to enable scaling across multiple backend instances.
+6. **Dockerfile** & **docker‑compose.yml** – define services:
+   - `backend` (built from Dockerfile, exposes port 4000).
+   - `redis` (image `redis:7-alpine`).
+   - `postgres` (if you choose PostgreSQL, keep on free tier).
+   - Volumes for persisting SQLite file or Postgres data.
+
+---
+
+## Required Knowledge & Learning Topics
+| Topic | Resources (free) |
+|-------|------------------|
+| **Node.js + Express** | Official docs: https://expressjs.com/  |
+| **Socket.io** | Getting started guide: https://socket.io/docs/v4/ |
+| **SQLite (or PostgreSQL)** | SQLite docs: https://www.sqlite.org/docs.html ; Postgres tutorials: https://www.postgresql.org/docs/current/tutorial-start.html |
+| **Docker Compose** | Docker docs: https://docs.docker.com/compose/ |
+| **Cron scheduling in Node** | npm `node-cron` docs: https://www.npmjs.com/package/node-cron |
+| **Public Threat Feeds (free)** | • OTX: https://otx.alienvault.com/api  (no auth for many endpoints)
+| | • AbuseIPDB: https://docs.abuseipdb.com/ (free tier 1,000 requests/day) |
+| | • VirusTotal: https://developers.virustotal.com/reference (free tier 4 requests/min) |
+| **Environment variables** | `dotenv` npm package – https://github.com/motdotla/dotenv |
+| **CORS** | Understanding CORS for front‑end to backend: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS |
+| **Realtime patterns** | WebSocket vs SSE – https://ably.com/concepts/websockets vs https://developer.mozilla.org/en-US/docs/Web/API/Server‑Sent_events |
+
+---
+
+## Step‑by‑Step Implementation Plan (high‑level)
+1. **Create backend folder** (already done) and initialise npm (`npm init -y`).
+2. Install dependencies: `express socket.io cors body-parser dotenv` (+ `better-sqlite3` or `pg`).
+3. Add `server.js` with Express + Socket.io boilerplate.
+4. Implement `db.js` (SQLite file in `data/` directory). Create tables for `threats` (id, indicator, type, source, timestamp, raw_json).
+5. Write one feed module (e.g., `otx.js`) that fetches the latest JSON and returns normalized threat objects.
+6. Create `poller.js` using `node-cron` to run every 5 min, call feed modules, store new threats, emit via Socket.io.
+7. Add a simple **health** endpoint (`GET /health`) for quick checks.
+8. Test locally: run `npm run dev` (nodemon) and open the React app; modify the frontend to connect to `http://localhost:4000` via Socket.io and listen for `threatUpdate` events.
+9. Dockerize: write a `Dockerfile` for the backend, add `docker-compose.yml` to spin up `backend`, `redis`, (optional) `postgres`.
+10. (Optional) Deploy to a free hosting platform that supports Docker, such as **Railway**, **Render**, or **Fly.io** – all have generous free tiers for hobby projects.
+
+---
+
+## Cost‑Free Considerations
+- **APIs** – stick to the free‑tier limits (e.g., 1 k requests/day on AbuseIPDB is enough for a hackathon). Cache results in Redis to avoid duplicate calls.
+- **Hosting** – use Docker on a local machine during development. For a public demo, Railway/Render provide free containers with 500 h/month which is more than enough for a short‑term hackathon.
+- **Database** – SQLite requires no external service. If you need remote access, Supabase offers a free PostgreSQL instance (500 MB storage) and also provides a real‑time subscription feature (but that adds complexity; use it only if needed).
+
+---
+
+## Next Steps for You
+- Decide whether you want **SQLite** (simpler) or **PostgreSQL** (more scalable). I’ll tailor the code accordingly.
+- Create a `.env` file with any API keys you obtain from the free threat‑feed services.
+- Let me know if you’d like the concrete code skeleton for `server.js`, `db.js`, a sample feed module, and Docker files.
+
+Feel free to ask for any of those pieces, and I can generate them step‑by‑step.

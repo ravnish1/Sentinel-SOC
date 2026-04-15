@@ -1,11 +1,15 @@
 import React, { useMemo, useState } from 'react';
 import { AlertTriangle, Download, Filter, Radar, Search, ShieldAlert, ShieldCheck, ShieldX, Target } from 'lucide-react';
+import { useThreatEngine } from '../hooks/useThreatEngine';
 import './ThreatLogsPage.css';
 
-const logRows = [
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+
+// Fallback sample logs for demo purposes
+const fallbackLogRows = [
   {
-    id: 'INC-2041',
-    time: '12:41:08 UTC',
+    id: 1,
+    timestamp: '12:41:08',
     source: '185.33.12.11',
     target: 'vpn-gateway-01',
     event: 'Credential stuffing burst',
@@ -17,8 +21,8 @@ const logRows = [
     note: '1,248 login attempts against SSO in 90 seconds.',
   },
   {
-    id: 'INC-2042',
-    time: '12:39:44 UTC',
+    id: 2,
+    timestamp: '12:39:44',
     source: '45.33.22.11',
     target: 'api-prod-03',
     event: 'SQL injection payload',
@@ -28,84 +32,6 @@ const logRows = [
     region: 'Dallas, US',
     owner: 'AppSec',
     note: 'Injection pattern matched WAF signature pack 8.4.',
-  },
-  {
-    id: 'INC-2043',
-    time: '12:37:02 UTC',
-    source: '172.16.0.3',
-    target: 'finance-db-02',
-    event: 'Suspicious database enumeration',
-    technique: 'MITRE T1018',
-    severity: 'Medium',
-    verdict: 'Monitoring',
-    region: 'Mumbai, IN',
-    owner: 'Data Sec',
-    note: 'Multiple schema queries from a trusted subnet boundary.',
-  },
-  {
-    id: 'INC-2044',
-    time: '12:34:19 UTC',
-    source: '91.134.0.9',
-    target: 'workstation-114',
-    event: 'Malware hash detonation',
-    technique: 'MITRE T1204',
-    severity: 'Critical',
-    verdict: 'Quarantined',
-    region: 'Warsaw, PL',
-    owner: 'EDR',
-    note: 'Binary blocked at execution with sandbox verdict 99.7.',
-  },
-  {
-    id: 'INC-2045',
-    time: '12:31:56 UTC',
-    source: '193.120.44.8',
-    target: 'cdn-edge-05',
-    event: 'Geo-velocity anomaly',
-    technique: 'MITRE T1078',
-    severity: 'High',
-    verdict: 'Escalated',
-    region: 'Sao Paulo, BR',
-    owner: 'IAM',
-    note: 'Session jump from APAC to LATAM within 4 minutes.',
-  },
-  {
-    id: 'INC-2046',
-    time: '12:28:11 UTC',
-    source: '10.24.14.7',
-    target: 'internal-bastion',
-    event: 'Privileged command burst',
-    technique: 'MITRE T1059',
-    severity: 'Low',
-    verdict: 'Reviewed',
-    region: 'Bengaluru, IN',
-    owner: 'Platform',
-    note: 'Commands match automation template after allowlist check.',
-  },
-  {
-    id: 'INC-2047',
-    time: '12:22:40 UTC',
-    source: '88.198.57.1',
-    target: 'mail-relay-02',
-    event: 'Phishing attachment delivery',
-    technique: 'MITRE T1204',
-    severity: 'High',
-    verdict: 'Blocked',
-    region: 'Frankfurt, DE',
-    owner: 'Messaging',
-    note: 'Attachment sandbox hit macro-based download chain.',
-  },
-  {
-    id: 'INC-2048',
-    time: '12:18:13 UTC',
-    source: '203.0.113.51',
-    target: 'k8s-ingress',
-    event: 'Port scan with service probe',
-    technique: 'MITRE T1046',
-    severity: 'Medium',
-    verdict: 'Observed',
-    region: 'Singapore, SG',
-    owner: 'Cloud',
-    note: 'Probe set covered 42 services in under 20 seconds.',
   },
 ];
 
@@ -133,23 +59,42 @@ const filterChips = [
 ];
 
 const ThreatLogsPage = () => {
+  // Use real threat engine for live data
+  const { logs: threatLogs, isLive } = useThreatEngine();
+  
+  // Convert threat logs to table format
+  const logRows = threatLogs.length > 0 ? threatLogs.map((log) => ({
+    id: log.id,
+    time: log.timestamp,
+    source: log.source,
+    target: log.source.startsWith('192.168') || log.source.startsWith('10.') || log.source.startsWith('172.16') ? 'internal-system' : 'external',
+    event: log.event,
+    technique: 'MITRE T1110',
+    severity: log.severity,
+    verdict: log.severity === 'Critical' ? 'Blocked' : log.severity === 'High' ? 'Contained' : 'Monitoring',
+    region: 'Threat Feed',
+    owner: log.source || 'OTX',
+    note: `Indicator: ${log.indicator} (${log.type})`,
+  })) : fallbackLogRows;
+
   const [query, setQuery] = useState('');
   const [severity, setSeverity] = useState('All');
   const [verdict, setVerdict] = useState('all');
-  const [selectedId, setSelectedId] = useState(logRows[0].id);
+  const [selectedId, setSelectedId] = useState(logRows[0]?.id);
   const [banner, setBanner] = useState('');
+  const [isHunting, setIsHunting] = useState(false);
 
   const filteredLogs = useMemo(() => {
     const q = query.trim().toLowerCase();
     return logRows.filter((row) => {
-      const matchesQuery = !q || [row.id, row.source, row.target, row.event, row.technique, row.region, row.owner].some((field) => field.toLowerCase().includes(q));
+      const matchesQuery = !q || [row.id, row.source, row.target, row.event, row.technique, row.region, row.owner].some((field) => String(field).toLowerCase().includes(q));
       const matchesSeverity = severity === 'All' || row.severity === severity;
       const matchesVerdict = verdict === 'all' || row.verdict.toLowerCase() === verdict;
       return matchesQuery && matchesSeverity && matchesVerdict;
     });
-  }, [query, severity, verdict]);
+  }, [query, severity, verdict, logRows]);
 
-  const selectedLog = filteredLogs.find((row) => row.id === selectedId) || filteredLogs[0] || logRows[0];
+  const selectedLog = filteredLogs.find((row) => row.id === selectedId) || filteredLogs[0] || logRows[0] || fallbackLogRows[0];
 
   const stats = useMemo(() => ({
     total: filteredLogs.length,
@@ -163,6 +108,62 @@ const ThreatLogsPage = () => {
     window.setTimeout(() => setBanner(''), 2800);
   };
 
+  const handleExportCsv = () => {
+    if (!filteredLogs.length) {
+      setBanner('No filtered logs available for export.');
+      window.setTimeout(() => setBanner(''), 2600);
+      return;
+    }
+
+    const columns = ['id', 'time', 'source', 'target', 'event', 'technique', 'severity', 'verdict', 'region', 'owner', 'note'];
+    const csv = [
+      columns.join(','),
+      ...filteredLogs.map((row) => columns.map((column) => {
+        const value = row[column] == null ? '' : String(row[column]);
+        return `"${value.replace(/"/g, '""')}"`;
+      }).join(',')),
+    ].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `threat-logs-${Date.now()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setBanner(`Exported ${filteredLogs.length} incident rows.`);
+    window.setTimeout(() => setBanner(''), 2800);
+  };
+
+  const handleLiveHunt = async () => {
+    try {
+      setIsHunting(true);
+      setBanner('Live Hunt started. Triggering immediate poller cycle...');
+
+      const response = await fetch(`${API_BASE_URL}/api/poller/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || `HTTP ${response.status}`);
+      }
+
+      const inserted = payload?.feeds?.otx?.inserted ?? 0;
+      const fetched = payload?.feeds?.otx?.fetched ?? 0;
+      setBanner(`Live Hunt completed. OTX fetched: ${fetched}, inserted: ${inserted}.`);
+    } catch (error) {
+      setBanner(`Live Hunt failed: ${error.message}`);
+    } finally {
+      setIsHunting(false);
+      window.setTimeout(() => setBanner(''), 3800);
+    }
+  };
+
   return (
     <div className="page-shell logs-page">
       <section className="page-hero">
@@ -170,10 +171,18 @@ const ThreatLogsPage = () => {
           <p className="page-kicker mono">Operations / Threat Logs</p>
           <h1 className="page-title">Threat Logs</h1>
           <p className="page-copy">High-fidelity incident telemetry with search, verdict filters, and response actions aligned to SOC workflows.</p>
+          <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isLive ? '#10b981' : '#f59e0b' }}></span>
+            <span style={{ color: isLive ? '#10b981' : '#f59e0b' }}>
+              {isLive ? 'LIVE BACKEND CONNECTED' : 'FALLBACK MODE - Backend Unavailable'}
+            </span>
+          </div>
         </div>
         <div className="action-group">
-          <button type="button" className="ui-button ghost"><Download size={14} /> Export CSV</button>
-          <button type="button" className="ui-button ghost"><Radar size={14} /> Live Hunt</button>
+          <button type="button" className="ui-button ghost" onClick={handleExportCsv}><Download size={14} /> Export CSV</button>
+          <button type="button" className="ui-button ghost" onClick={handleLiveHunt} disabled={isHunting}>
+            <Radar size={14} /> {isHunting ? 'Hunting...' : 'Live Hunt'}
+          </button>
           <button type="button" className="ui-button primary" onClick={() => handleAction('All visible incidents queued for acknowledgement.')}>Acknowledge Feed</button>
         </div>
       </section>
