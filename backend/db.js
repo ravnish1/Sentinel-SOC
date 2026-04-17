@@ -37,7 +37,7 @@ function getReadClient() {
   }
 
   const supabaseUrl = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
   if (!supabaseUrl || !key) {
     throw new Error('Supabase URL and read key not set in .env (SUPABASE_KEY or SUPABASE_SERVICE_ROLE_KEY).');
   }

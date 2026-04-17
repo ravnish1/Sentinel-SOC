@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { mockLogs, mockSummaryStats } from '../data/mockData';
 
@@ -47,84 +47,109 @@ function buildStats(logs) {
   };
 }
 
-export const useThreatEngine = () => {
-  const [logs, setLogs] = useState(mockLogs);
-  const [volumeData, setVolumeData] = useState(() =>
-    Array.from({ length: MAX_VOLUME_POINTS }, (_, i) => ({ time: i, volume: 0 }))
-  );
-  const [isLive, setIsLive] = useState(false);
+// --- Global Shared State ---
+let globalLogs = mockLogs;
+let globalVolumeData = Array.from({ length: MAX_VOLUME_POINTS }, (_, i) => ({ time: i, volume: 0 }));
+let globalIsLive = false;
+let globalIntervalId = null;
+let globalSocket = null;
+const listeners = new Set();
+let subscribers = 0;
 
-  useEffect(() => {
-    let mounted = true;
+function notify() {
+  listeners.forEach(fn => fn());
+}
 
-    const pushVolumePoint = (value) => {
-      setVolumeData((prev) => {
-        const nextTime = prev.length ? prev[prev.length - 1].time + 1 : 0;
-        const nextPoint = { time: nextTime, volume: value };
-        return [...prev.slice(-(MAX_VOLUME_POINTS - 1)), nextPoint];
-      });
-    };
-
-    async function loadInitialThreats() {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/threats?limit=${MAX_LOGS}`);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const threats = await response.json();
-        if (!mounted || !Array.isArray(threats)) return;
-
-        const mappedLogs = threats.map(toLogEntry);
-        setLogs(mappedLogs.slice(0, MAX_LOGS));
-        pushVolumePoint(mappedLogs.length);
-      } catch (error) {
-        if (!mounted) return;
-        console.warn('Falling back to mock logs. Backend fetch failed:', error.message);
-        setLogs(mockLogs);
-        pushVolumePoint(mockLogs.length);
+async function fetchThreatsFromServer() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/threats?limit=${MAX_LOGS}`);
+    if (response.ok) {
+      const threats = await response.json();
+      if (Array.isArray(threats)) {
+        globalLogs = threats.map(toLogEntry).slice(0, MAX_LOGS);
+        const nextTime = globalVolumeData.length ? globalVolumeData[globalVolumeData.length - 1].time + 1 : 0;
+        globalVolumeData = [...globalVolumeData.slice(-(MAX_VOLUME_POINTS - 1)), { time: nextTime, volume: globalLogs.length }];
+        notify();
       }
     }
+  } catch (error) {
+    console.warn('Backend fetch failed during shared refresh:', error.message);
+  }
+}
 
-    loadInitialThreats();
+function initGlobalStore() {
+  if (subscribers > 0) return;
+  
+  fetchThreatsFromServer();
+  globalIntervalId = setInterval(fetchThreatsFromServer, 5000);
+  
+  globalSocket = io(API_BASE_URL, {
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+  });
 
-    const socket = io(API_BASE_URL, {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-    });
+  globalSocket.on('connect', () => {
+    globalIsLive = true;
+    notify();
+  });
 
-    socket.on('connect', () => {
-      if (!mounted) return;
-      setIsLive(true);
-    });
+  globalSocket.on('disconnect', () => {
+    globalIsLive = false;
+    notify();
+  });
 
-    socket.on('disconnect', () => {
-      if (!mounted) return;
-      setIsLive(false);
-    });
+  globalSocket.on('threatUpdate', (threat) => {
+    if (!threat) return;
+    const nextLog = toLogEntry(threat);
+    globalLogs = [nextLog, ...globalLogs.filter((item) => item.id !== nextLog.id)].slice(0, MAX_LOGS);
+    const nextTime = globalVolumeData.length ? globalVolumeData[globalVolumeData.length - 1].time + 1 : 0;
+    globalVolumeData = [...globalVolumeData.slice(-(MAX_VOLUME_POINTS - 1)), { time: nextTime, volume: globalLogs.length }];
+    notify();
+  });
+}
 
-    socket.on('threatUpdate', (threat) => {
-      if (!mounted || !threat) return;
-      const nextLog = toLogEntry(threat);
-      setLogs((prevLogs) => {
-        const merged = [nextLog, ...prevLogs.filter((item) => item.id !== nextLog.id)].slice(0, MAX_LOGS);
-        setVolumeData((prevVolume) => {
-          const nextTime = prevVolume.length ? prevVolume[prevVolume.length - 1].time + 1 : 0;
-          return [...prevVolume.slice(-(MAX_VOLUME_POINTS - 1)), { time: nextTime, volume: merged.length }];
-        });
-        return merged;
-      });
-    });
+function cleanupGlobalStore() {
+  if (subscribers > 0) return;
+  clearInterval(globalIntervalId);
+  if (globalSocket) {
+    globalSocket.close();
+    globalSocket = null;
+  }
+}
 
+export const useThreatEngine = () => {
+  const [stamp, setStamp] = useState(0);
+
+  useEffect(() => {
+    if (subscribers === 0) {
+      initGlobalStore();
+    }
+    subscribers++;
+    
+    const listener = () => setStamp(s => s + 1);
+    listeners.add(listener);
+    
     return () => {
-      mounted = false;
-      socket.close();
+      listeners.delete(listener);
+      subscribers--;
+      setTimeout(cleanupGlobalStore, 1000); // Debounce cleanup slightly for navigations
     };
   }, []);
 
   const stats = useMemo(() => {
-    if (!logs.length) return mockSummaryStats;
-    return buildStats(logs);
-  }, [logs]);
+    if (!globalLogs.length) return mockSummaryStats;
+    return buildStats(globalLogs);
+  }, [globalLogs, stamp]); // Dependency on stamp forces re-eval on update
 
-  return { stats, logs, volumeData, isLive };
+  const refreshThreats = useCallback(async () => {
+    await fetchThreatsFromServer();
+  }, []);
+
+  return { 
+    stats, 
+    logs: globalLogs, 
+    volumeData: globalVolumeData, 
+    isLive: globalIsLive, 
+    refreshThreats 
+  };
 };

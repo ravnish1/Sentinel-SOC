@@ -40,7 +40,7 @@ const Sidebar = ({ collapsed, onToggleCollapse }) => {
         onClick={handleNewTask}
       >
         <Shield size={14} />
-        <span>New Task</span>
+        <span>Assign New Task</span>
       </button>
 
       <div className="sidebar-brand">

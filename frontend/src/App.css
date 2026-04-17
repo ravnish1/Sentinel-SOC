@@ -22,12 +22,12 @@
 
 .ops-placeholder h2 {
   font-size: 1.05rem;
-  color: #ffffff;
+  color: var(--text-primary);
 }
 
 .ops-placeholder p {
   margin-top: 8px;
-  color: #a0aec0;
+  color: var(--text-secondary);
   font-size: 0.82rem;
 }
 

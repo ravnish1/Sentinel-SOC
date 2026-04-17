@@ -573,7 +573,7 @@ const WorldThreatMap = ({ activeRegion, onSelectRegion, hotspots, pulseEvents = 
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { stats, logs, volumeData, isLive } = useThreatEngine();
+  const { stats, logs, volumeData, isLive, refreshThreats } = useThreatEngine();
   const [isLoading, setIsLoading] = useState(true);
   const [banner, setBanner] = useState('');
   const [isHunting, setIsHunting] = useState(false);
@@ -972,6 +972,11 @@ const Dashboard = () => {
       const fetched = payload?.feeds?.otx?.fetched ?? 0;
       setLastScanAt(new Date());
       pushBanner(`Scan complete! ${inserted} new threats found (fetched ${fetched}).`);
+      
+      // Refresh the logs immediately
+      if (typeof refreshThreats === 'function') {
+        await refreshThreats();
+      }
     } catch (error) {
       pushBanner(`Trigger Hunt failed: ${error.message}`);
     } finally {
