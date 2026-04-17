@@ -138,6 +138,7 @@ app.get('/health', (req, res) => {
 // Threats endpoint – fetch recent threats from Supabase
 const {
   init,
+  getReadClient,
   getRecent,
   addThreat,
   getById,
@@ -158,10 +159,32 @@ const {
   getEliminationStats
 } = require('./db');
 
+// AI Pipeline Integration
+const aiRoutes = require('./routes/ai-routes');
+const { initializeAIPipeline } = require('./ai-engine');
+app.use('/api/ai', aiRoutes);
+
 app.get('/api/threats', asyncHandler(async (req, res) => {
-  const limit = Number.parseInt(req.query.limit, 10);
-  const threats = await getRecent(Number.isNaN(limit) ? 20 : limit);
-  res.json(threats);
+  const limit = parseLimit(req.query.limit, 50, 100);
+  const withAi = req.query.with_ai === 'true';
+  const severity = req.query.severity;
+
+  const client = getReadClient();
+  let query = client.from('threats').select('*');
+
+  if (withAi) {
+    query = query.not('raw_json->ai_insights', 'is', null);
+  }
+  if (severity && severity !== 'All') {
+    query = query.eq('severity', severity.toLowerCase());
+  }
+
+  const { data, error } = await query
+    .order('timestamp', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  res.json(data);
 }));
 
 app.post('/api/threats', requireAuth, asyncHandler(async (req, res) => {
@@ -442,6 +465,7 @@ async function startServer() {
     await init();
     server.listen(PORT, () => {
       console.log(`Backend server listening on http://localhost:${PORT}`);
+      initializeAIPipeline(io);
     });
     startPoller(io);
   } catch (err) {

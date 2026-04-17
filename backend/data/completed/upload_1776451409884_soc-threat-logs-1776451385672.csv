@@ -1,0 +1,10 @@
+timestamp,source,target,threatType,severity,status
+"00:12:59","OTX-TEST","edge-gateway","IPV4","Low","Monitoring"
+"00:13:00","OTX-TEST","edge-gateway","IPV4","Low","Monitoring"
+"00:13:01","OTX-TEST","edge-gateway","DOMAIN","Medium","Monitoring"
+"00:13:01","OTX-TEST","edge-gateway","FILE","Low","Monitoring"
+"23:55:57","OTX-TEST","edge-gateway","FILE","Low","Monitoring"
+"23:55:57","OTX-TEST","edge-gateway","IPV4","Low","Monitoring"
+"23:55:57","OTX-TEST","edge-gateway","IPV4","Low","Monitoring"
+"23:55:57","OTX-TEST","edge-gateway","DOMAIN","Medium","Monitoring"
+"23:55:57","OTX-TEST","edge-gateway","FILE","Low","Monitoring"

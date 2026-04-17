@@ -1,0 +1,12 @@
+cve,asset,indicator,threatType,severity,status,score
+"CVE-2026-1200","external-exposure","192.0.2.10","IPV4","Low","Monitoring","98"
+"CVE-2025-1213","external-exposure","198.51.100.42","IPV4","Low","Monitoring","94"
+"CVE-2024-1226","external-exposure","malware.example.com","DOMAIN","Medium","Monitoring","90"
+"CVE-2026-1239","external-exposure","5d41402abc4b2a76b9719d911017c592","FILE","Low","Monitoring","86"
+"CVE-2025-1252","external-exposure","unknown","UNKNOWN","low","Monitoring","82"
+"CVE-2024-1265","external-exposure","unknown","UNKNOWN","low","Monitoring","78"
+"CVE-2026-1278","external-exposure","unknown","UNKNOWN","medium","Monitoring","74"
+"CVE-2025-1291","external-exposure","unknown","UNKNOWN","low","Monitoring","70"
+"CVE-2024-1304","external-exposure","unknown","UNKNOWN","low","Monitoring","66"
+"CVE-2026-1317","external-exposure","unknown","UNKNOWN","medium","Monitoring","62"
+"CVE-2025-1330","external-exposure","unknown","UNKNOWN","low","Monitoring","58"

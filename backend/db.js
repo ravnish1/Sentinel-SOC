@@ -618,6 +618,8 @@ module.exports = {
   updateById,
   deleteById,
   ensureWriteConfigured,
+  getReadClient,
+  getWriteClient,
   // Threat Actions
   getThreatActions,
   getThreatActionsWithCount,

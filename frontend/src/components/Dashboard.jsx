@@ -37,6 +37,8 @@ import {
 import { io } from 'socket.io-client';
 import { useNavigate } from 'react-router-dom';
 import { useThreatEngine } from '../hooks/useThreatEngine';
+import { AttackChainGraph } from './ai-insights/AttackChainGraph';
+import { ThreatRadar } from './ai-insights/ThreatRadar';
 import './Dashboard.css';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
@@ -392,24 +394,24 @@ const WorldThreatMap = ({ activeRegion, onSelectRegion, hotspots, pulseEvents = 
 
   const threatRoutes = focusedRegion
     ? hotspots
-        .filter((hotspot) => hotspot.name !== focusedRegion.name)
-        .map((hotspot) => {
-          const startX = hotspot.x * 9.6;
-          const startY = hotspot.y * 4.2;
-          const endX = focusedRegion.x * 9.6;
-          const endY = focusedRegion.y * 4.2;
-          const controlY = Math.min(startY, endY) - 42;
-          const sourceCount = getAssetThreatCount(hotspot);
-          const routeWeight = Math.max(1.2, Math.min(3.8, sourceCount / 12));
-          return {
-            id: `${hotspot.name}-${focusedRegion.name}`,
-            pulse: hotspot.pulse,
-            sourceName: hotspot.name,
-            sourceCount,
-            routeWeight,
-            d: `M ${startX} ${startY} Q ${(startX + endX) / 2} ${controlY} ${endX} ${endY}`,
-          };
-        })
+      .filter((hotspot) => hotspot.name !== focusedRegion.name)
+      .map((hotspot) => {
+        const startX = hotspot.x * 9.6;
+        const startY = hotspot.y * 4.2;
+        const endX = focusedRegion.x * 9.6;
+        const endY = focusedRegion.y * 4.2;
+        const controlY = Math.min(startY, endY) - 42;
+        const sourceCount = getAssetThreatCount(hotspot);
+        const routeWeight = Math.max(1.2, Math.min(3.8, sourceCount / 12));
+        return {
+          id: `${hotspot.name}-${focusedRegion.name}`,
+          pulse: hotspot.pulse,
+          sourceName: hotspot.name,
+          sourceCount,
+          routeWeight,
+          d: `M ${startX} ${startY} Q ${(startX + endX) / 2} ${controlY} ${endX} ${endY}`,
+        };
+      })
     : [];
 
   const totalFlow = threatRoutes.reduce((acc, route) => acc + route.sourceCount, 0);
@@ -572,11 +574,12 @@ const WorldThreatMap = ({ activeRegion, onSelectRegion, hotspots, pulseEvents = 
 };
 
 const Dashboard = () => {
+  const [isHunting, setIsHunting] = useState(false);
   const navigate = useNavigate();
-  const { stats, logs, volumeData, isLive, refreshThreats } = useThreatEngine();
+  const { stats, aiStats, logs, volumeData, isLive, refreshThreats, pipelineStatus, uploadCSV } = useThreatEngine();
   const [isLoading, setIsLoading] = useState(true);
   const [banner, setBanner] = useState('');
-  const [isHunting, setIsHunting] = useState(false);
+
   const [searchText, setSearchText] = useState('');
   const [severityFilter, setSeverityFilter] = useState('All');
   const [selectedRegion, setSelectedRegion] = useState('All regions');
@@ -594,6 +597,8 @@ const Dashboard = () => {
   const [blockIndicator, setBlockIndicator] = useState('');
   const [blockType, setBlockType] = useState('ip');
   const [isBlocking, setIsBlocking] = useState(false);
+  const [remoteUrl, setRemoteUrl] = useState('');
+  const [isFetchingUrl, setIsFetchingUrl] = useState(false);
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -893,13 +898,22 @@ const Dashboard = () => {
       series: sparkSeries.map((value) => Math.max(2, 20 - value)),
     },
     {
-      id: 'signal',
-      label: 'Signal Integrity',
-      value: `${healthScore}%`,
-      trend: isLive ? 'Live' : 'Fallback',
-      direction: isLive ? 'up' : 'down',
-      tone: isLive ? 'healthy' : 'info',
+      id: 'ai-depth',
+      label: 'AI Analysis Depth',
+      value: aiStats?.totalAnalyzed ? `${aiStats.totalAnalyzed}` : '0',
+      trend: `${aiStats?.avgConfidence || 0}% Conf.`,
+      direction: 'up',
+      tone: (aiStats?.avgConfidence || 0) > 80 ? 'healthy' : 'info',
       series: sparkSeries,
+    },
+    {
+      id: 'ai-confidence',
+      label: 'Detection Confidence',
+      value: `${aiStats?.avgConfidence || 0}%`,
+      trend: (aiStats?.immediateActions || 0) > 0 ? `+${aiStats?.immediateActions} actions` : 'Stable',
+      direction: 'up',
+      tone: (aiStats?.avgConfidence || 0) > 80 ? 'healthy' : 'warning',
+      series: sparkSeries.map(v => Math.max(0, v - 2)),
     },
   ];
 
@@ -957,7 +971,11 @@ const Dashboard = () => {
         pushBanner(`Scan cooling down (${scanCooldown}s remaining).`);
         return;
       }
-      setIsHunting(true);
+      if (pipelineStatus?.is_active) {
+        pushBanner('A hunt is already in progress.');
+        return;
+      }
+
       setScanCooldown(10);
       pushBanner('Trigger Hunt started. Running ingestion cycle...');
       const response = await fetch(`${API_BASE_URL}/api/poller/run`, {
@@ -972,17 +990,15 @@ const Dashboard = () => {
       const fetched = payload?.feeds?.otx?.fetched ?? 0;
       setLastScanAt(new Date());
       pushBanner(`Scan complete! ${inserted} new threats found (fetched ${fetched}).`);
-      
-      // Refresh the logs immediately
+
       if (typeof refreshThreats === 'function') {
         await refreshThreats();
       }
     } catch (error) {
       pushBanner(`Trigger Hunt failed: ${error.message}`);
-    } finally {
-      setIsHunting(false);
     }
   };
+
 
   const handleEmergencyBlock = async () => {
     if (!blockIndicator.trim()) {
@@ -1144,26 +1160,26 @@ const Dashboard = () => {
       <section className="metrics-bar" aria-label="Critical metrics">
         {isLoading
           ? Array.from({ length: 5 }).map((_, index) => (
-              <article key={`metric-skeleton-${index}`} className="metric-card is-skeleton panel">
-                <div className="skeleton-line" />
-                <div className="skeleton-line is-short" />
-              </article>
-            ))
+            <article key={`metric-skeleton-${index}`} className="metric-card is-skeleton panel">
+              <div className="skeleton-line" />
+              <div className="skeleton-line is-short" />
+            </article>
+          ))
           : metrics.map((metric) => (
-              <button key={metric.id} type="button" className={`metric-card panel tone-${metric.tone}`} onClick={() => setSeverityFilter(metric.label.includes('Compliance') ? 'Low' : 'All')} title={metric.label}>
-                <div className="metric-head">
-                  <span className="metric-label">{metric.label}</span>
-                  <span className={`metric-trend ${metric.direction}`}>
-                    {metric.direction === 'up' ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-                    {metric.trend}
-                  </span>
-                </div>
-                <div className="metric-value mono">{metric.value}</div>
-                <svg className="metric-sparkline" viewBox="0 0 104 28" preserveAspectRatio="none" aria-hidden="true">
-                  <polyline points={sparklinePoints(metric.series)} />
-                </svg>
-              </button>
-            ))}
+            <button key={metric.id} type="button" className={`metric-card panel tone-${metric.tone}`} onClick={() => setSeverityFilter(metric.label.includes('Compliance') ? 'Low' : 'All')} title={metric.label}>
+              <div className="metric-head">
+                <span className="metric-label">{metric.label}</span>
+                <span className={`metric-trend ${metric.direction}`}>
+                  {metric.direction === 'up' ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
+                  {metric.trend}
+                </span>
+              </div>
+              <div className="metric-value mono">{metric.value}</div>
+              <svg className="metric-sparkline" viewBox="0 0 104 28" preserveAspectRatio="none" aria-hidden="true">
+                <polyline points={sparklinePoints(metric.series)} />
+              </svg>
+            </button>
+          ))}
       </section>
 
       <section className="elim-metrics-row" aria-label="Elimination metrics">
@@ -1318,10 +1334,12 @@ const Dashboard = () => {
                 type="button"
                 className="ui-button primary quick-action-button"
                 onClick={handleTriggerHunt}
-                disabled={isHunting || scanCooldown > 0}
+                disabled={pipelineStatus?.is_active || scanCooldown > 0}
               >
-                {isHunting ? <span className="button-spinner" /> : <Search size={14} />}
-                {isHunting ? 'Scanning...' : scanCooldown > 0 ? `Cooldown ${scanCooldown}s` : 'Run Manual Scan'}
+                {pipelineStatus?.is_active ? <span className="button-spinner" /> : <Search size={14} />}
+                {pipelineStatus?.is_active
+                  ? `Batch ${pipelineStatus.current_batch}/${pipelineStatus.total_batches}...`
+                  : scanCooldown > 0 ? `Cooldown ${scanCooldown}s` : 'Run Manual Scan'}
               </button>
 
               <div className="quick-block">
@@ -1346,6 +1364,41 @@ const Dashboard = () => {
                 </button>
               </div>
 
+              <div className="quick-block">
+                <input
+                  className="ui-field"
+                  style={{ flex: 2 }}
+                  value={remoteUrl}
+                  onChange={(event) => setRemoteUrl(event.target.value)}
+                  placeholder="Remote CSV URL..."
+                />
+                <button
+                  type="button"
+                  className="ui-button ghost"
+                  onClick={async () => {
+                    if (!remoteUrl) return;
+                    setIsFetchingUrl(true);
+                    try {
+                      const res = await fetch(`${API_BASE_URL}/api/ai/fetch-remote`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ url: remoteUrl })
+                      });
+                      const data = await res.json();
+                      pushBanner(data.message || 'Started fetching.');
+                      setRemoteUrl('');
+                    } catch (e) {
+                      pushBanner('Fetch failed.');
+                    } finally {
+                      setIsFetchingUrl(false);
+                    }
+                  }}
+                  disabled={isFetchingUrl}
+                >
+                  {isFetchingUrl ? '...' : 'Fetch'}
+                </button>
+              </div>
+
               <div className="quick-links">
                 <button type="button" className="ui-button ghost" onClick={() => navigate('/findings')}>
                   <ChevronRight size={14} /> View Full Stats
@@ -1357,6 +1410,11 @@ const Dashboard = () => {
             </div>
           </section>
         </aside>
+      </section>
+
+      <section className="viz-grid" aria-label="AI Deep Analytics" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 2fr', gap: '24px', marginTop: '24px' }}>
+        <ThreatRadar />
+        <AttackChainGraph />
       </section>
 
       <section className="viz-grid" aria-label="Elimination visualizations">
@@ -1461,342 +1519,342 @@ const Dashboard = () => {
       {showLegacyPanels ? (
         <>
           <section className="main-grid" aria-label="Threat intelligence panels">
-        <article className="panel threat-map-panel">
-          <div className="panel-head compact">
-            <div>
-              <div className="panel-title">Global Threat Map</div>
-              <div className="panel-subtitle">Hover a hotspot for location and count. Click to filter data.</div>
-            </div>
-            <div className="live-chip">
-              <span className={`live-dot ${isLive ? 'is-live' : 'fallback'}`} />
-              {isLive ? 'Live signal' : 'Fallback telemetry'}
-            </div>
-          </div>
-
-          <WorldThreatMap
-            activeRegion={selectedRegion}
-            onSelectRegion={(regionName) => setSelectedRegion((current) => (current === regionName ? 'All regions' : regionName))}
-            hotspots={regionBars}
-            pulseEvents={mapPulseEvents}
-            activeThreatCount={activeRows.length}
-          />
-
-          <div className="region-bars">
-            {regionBars.map((region) => (
-              <button
-                key={region.name}
-                type="button"
-                className={`region-row ${selectedRegion === region.name ? 'is-active' : ''}`}
-                onClick={() => setSelectedRegion((current) => (current === region.name ? 'All regions' : region.name))}
-                title={`${region.name} • ${region.count} events`}
-              >
-                <div className="region-row-head">
-                  <span>{region.name}</span>
-                  <span className="mono">{region.count}</span>
+            <article className="panel threat-map-panel">
+              <div className="panel-head compact">
+                <div>
+                  <div className="panel-title">Global Threat Map</div>
+                  <div className="panel-subtitle">Hover a hotspot for location and count. Click to filter data.</div>
                 </div>
-                <div className="region-bar-track">
-                  <span className={`region-bar fill-${region.pulse}`} style={{ width: `${region.percent}%` }} />
+                <div className="live-chip">
+                  <span className={`live-dot ${isLive ? 'is-live' : 'fallback'}`} />
+                  {isLive ? 'Live signal' : 'Fallback telemetry'}
                 </div>
-              </button>
-            ))}
-          </div>
-        </article>
-
-        <aside className="sidebar-column">
-          <section className="panel analyst-panel">
-            <div className="panel-head compact">
-              <div>
-                <div className="panel-title">AI Analyst</div>
-                <div className="panel-subtitle">Plain-language summary with next-step recommendations.</div>
               </div>
-              <span className={`confidence-chip ${activeIncidents > 2 ? 'high' : 'medium'}`}>
-                <Sparkles size={13} /> {activeIncidents > 2 ? 'High confidence' : 'Medium confidence'}
-              </span>
-            </div>
 
-            <div className="analyst-summary">
-              <div className="analysis-badge">
-                <Flame size={14} /> Threat summary
-              </div>
-              <p>
-                {selectedFeed
-                  ? `${selectedFeed.event} is concentrating around ${selectedFeed.region}. The pattern suggests an active reconnaissance or exploitation campaign with repeated probes from ${selectedFeed.source}.`
-                  : 'No active incident selected.'}
-              </p>
-            </div>
-
-            <div className="analyst-grid">
-              <div className="analysis-card">
-                <span>Confidence</span>
-                <strong>{activeIncidents > 2 ? 'High' : 'Medium'}</strong>
-              </div>
-              <div className="analysis-card">
-                <span>Suggested action</span>
-                <strong>{selectedFeed?.severity === 'Critical' ? 'Isolate host' : 'Investigate alert'}</strong>
-              </div>
-            </div>
-
-            <div className="analyst-actions">
-              <button type="button" className="ui-button ghost"><BellRing size={14} /> Explain</button>
-              <button type="button" className="ui-button ghost"><Search size={14} /> Investigate</button>
-              <button type="button" className="ui-button primary"><Zap size={14} /> Take Action</button>
-            </div>
-          </section>
-
-          <section className="panel feed-panel">
-            <div className="panel-head compact feed-head">
-              <div>
-                <div className="panel-title">Live Activity Feed</div>
-                <div className="panel-subtitle">Real-time analyst stream with filters and quick drill-down.</div>
-              </div>
-              <div className="feed-controls">
-                <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="ui-select">
-                  {feedSortOptions.map((option) => (
-                    <option key={option.id} value={option.id}>{option.label}</option>
-                  ))}
-                </select>
-                <select value={feedFilter} onChange={(event) => setFeedFilter(event.target.value)} className="ui-select">
-                  {['All', 'Critical', 'High', 'Medium', 'Low'].map((item) => (
-                    <option key={item} value={item}>{item}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="feed-list">
-              {feedItems.length ? feedItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`feed-item ${selectedFeed?.id === item.id ? 'is-active' : ''}`}
-                  onClick={() => setSelectedFeedId(item.id)}
-                  title={`${item.event} • ${item.source}`}
-                >
-                  <span className={`feed-icon tone-${statusTone[item.severity]}`}>
-                    {item.severity === 'Critical' ? <TriangleAlert size={14} /> : item.severity === 'High' ? <AlertTriangle size={14} /> : item.severity === 'Medium' ? <Layers3 size={14} /> : <ShieldCheck size={14} />}
-                  </span>
-                  <div className="feed-copy">
-                    <div className="feed-row">
-                      <strong>{item.event}</strong>
-                      <span className={`feed-severity tone-${statusTone[item.severity]}`}>{item.severity}</span>
-                    </div>
-                    <p>{item.source} • {item.region} • {item.timestamp}</p>
-                  </div>
-                  <ChevronRight size={14} className="feed-chevron" />
-                </button>
-              )) : <div className="empty-state">No active threats detected</div>}
-            </div>
-          </section>
-        </aside>
-      </section>
-
-          <section className="bottom-grid" aria-label="Threat logs and incident details">
-        <article className="panel logs-panel">
-          <div className="panel-head compact logs-head">
-            <div>
-              <div className="panel-title">Threat Analytics</div>
-              <div className="panel-subtitle">Interactive visual breakdown of severity, trend, and attack sources.</div>
-            </div>
-            <div className="filters-inline">
-              {['All', 'Critical', 'High', 'Medium', 'Low'].map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  className={`ui-chip ${severityFilter === item ? 'is-active' : ''}`}
-                  onClick={() => setSeverityFilter(item)}
-                >
-                  <Filter size={12} /> {item}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="logs-toolbar">
-            <label className="search-wrap" htmlFor="logs-search">
-              <Search size={14} />
-              <input
-                id="logs-search"
-                className="ui-field"
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-                placeholder="Search timestamp, source IP, threat type, or status"
+              <WorldThreatMap
+                activeRegion={selectedRegion}
+                onSelectRegion={(regionName) => setSelectedRegion((current) => (current === regionName ? 'All regions' : regionName))}
+                hotspots={regionBars}
+                pulseEvents={mapPulseEvents}
+                activeThreatCount={activeRows.length}
               />
-            </label>
-          </div>
 
-          <div className="analytics-grid">
-            <section className="viz-card">
-              <div className="viz-head">
-                <h3>Severity Distribution</h3>
-                <span className="mono">{severityBreakdown.total} filtered events</span>
-              </div>
-              <div className="donut-layout">
-                <div className="severity-donut" style={{ background: severityBreakdown.gradient }}>
-                  <div className="severity-donut-hole">
-                    <strong>{severityBreakdown.total}</strong>
-                    <span>events</span>
-                  </div>
-                </div>
-                <div className="severity-legend">
-                  {severityBreakdown.severityOrder.map((severity) => {
-                    const count = severityBreakdown.counts[severity];
-                    const percent = Math.round((count / severityBreakdown.total) * 100);
-                    return (
-                      <button
-                        key={severity}
-                        type="button"
-                        className={`severity-legend-item ${severityFilter === severity ? 'is-active' : ''}`}
-                        onClick={() => setSeverityFilter((current) => (current === severity ? 'All' : severity))}
-                      >
-                        <i style={{ background: severityBreakdown.severityPalette[severity] }} />
-                        <span>{severity}</span>
-                        <strong className="mono">{count}</strong>
-                        <small className="mono">{Number.isFinite(percent) ? percent : 0}%</small>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
-
-            <section className="viz-card">
-              <div className="viz-head">
-                <h3>Telemetry Velocity</h3>
-                <span className="mono">Last {trendSeries.length} intervals</span>
-              </div>
-              <div className="trend-shell">
-                <svg viewBox="0 0 420 132" className="trend-chart" preserveAspectRatio="none" aria-hidden="true">
-                  <defs>
-                    <linearGradient id="trendAreaFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="rgba(249, 115, 22, 0.48)" />
-                      <stop offset="100%" stopColor="rgba(249, 115, 22, 0.02)" />
-                    </linearGradient>
-                  </defs>
-                  {[0.2, 0.4, 0.6, 0.8].map((ratio) => (
-                    <line
-                      key={ratio}
-                      x1="12"
-                      x2="408"
-                      y1={14 + ratio * 102}
-                      y2={14 + ratio * 102}
-                      className="trend-grid-line"
-                    />
-                  ))}
-                  <path d={trendPaths.areaPath} className="trend-area" fill="url(#trendAreaFill)" />
-                  <path d={trendPaths.linePath} className="trend-line" />
-                  {trendPaths.points.map((point) => (
-                    <circle key={`${point.x}-${point.y}`} cx={point.x} cy={point.y} r="2.8" className="trend-point" />
-                  ))}
-                </svg>
-                <div className="trend-meta mono">
-                  <span>Min: {trendPaths.min}</span>
-                  <span>Peak: {trendPaths.max}</span>
-                </div>
-              </div>
-            </section>
-
-            <section className="viz-card">
-              <div className="viz-head">
-                <h3>Top Attack Sources</h3>
-                <span className="mono">Ranked by frequency</span>
-              </div>
-              <div className="source-bars">
-                {topSources.length ? topSources.map((entry) => (
+              <div className="region-bars">
+                {regionBars.map((region) => (
                   <button
-                    key={entry.source}
+                    key={region.name}
                     type="button"
-                    className="source-row"
-                    onClick={() => setSearchText(entry.source)}
-                    title={`Filter by source ${entry.source}`}
+                    className={`region-row ${selectedRegion === region.name ? 'is-active' : ''}`}
+                    onClick={() => setSelectedRegion((current) => (current === region.name ? 'All regions' : region.name))}
+                    title={`${region.name} • ${region.count} events`}
                   >
-                    <div className="source-row-head">
-                      <span className="mono">{entry.source}</span>
-                      <strong className="mono">{entry.count}</strong>
+                    <div className="region-row-head">
+                      <span>{region.name}</span>
+                      <span className="mono">{region.count}</span>
                     </div>
-                    <div className="source-row-track">
-                      <span className="source-row-fill" style={{ width: `${entry.percent}%` }} />
+                    <div className="region-bar-track">
+                      <span className={`region-bar fill-${region.pulse}`} style={{ width: `${region.percent}%` }} />
                     </div>
                   </button>
-                )) : <div className="empty-state">No sources match current filters.</div>}
+                ))}
               </div>
-            </section>
-          </div>
+            </article>
 
-          <div className="event-strip">
-            <div className="viz-head">
-              <h3>Recent Event Stream</h3>
-              <span className="mono">Click a row to open Incident Detail</span>
-            </div>
-            <div className="event-row-list">
-              {isLoading
-                ? Array.from({ length: 4 }).map((_, index) => (
-                    <div key={`event-skeleton-${index}`} className="event-row">
-                      <div className="skeleton-line" />
-                    </div>
-                  ))
-                : visualRows.map((row) => (
+            <aside className="sidebar-column">
+              <section className="panel analyst-panel">
+                <div className="panel-head compact">
+                  <div>
+                    <div className="panel-title">AI Analyst</div>
+                    <div className="panel-subtitle">Plain-language summary with next-step recommendations.</div>
+                  </div>
+                  <span className={`confidence-chip ${activeIncidents > 2 ? 'high' : 'medium'}`}>
+                    <Sparkles size={13} /> {activeIncidents > 2 ? 'High confidence' : 'Medium confidence'}
+                  </span>
+                </div>
+
+                <div className="analyst-summary">
+                  <div className="analysis-badge">
+                    <Flame size={14} /> Threat summary
+                  </div>
+                  <p>
+                    {selectedFeed
+                      ? `${selectedFeed.event} is concentrating around ${selectedFeed.region}. The pattern suggests an active reconnaissance or exploitation campaign with repeated probes from ${selectedFeed.source}.`
+                      : 'No active incident selected.'}
+                  </p>
+                </div>
+
+                <div className="analyst-grid">
+                  <div className="analysis-card">
+                    <span>Confidence</span>
+                    <strong>{activeIncidents > 2 ? 'High' : 'Medium'}</strong>
+                  </div>
+                  <div className="analysis-card">
+                    <span>Suggested action</span>
+                    <strong>{selectedFeed?.severity === 'Critical' ? 'Isolate host' : 'Investigate alert'}</strong>
+                  </div>
+                </div>
+
+                <div className="analyst-actions">
+                  <button type="button" className="ui-button ghost"><BellRing size={14} /> Explain</button>
+                  <button type="button" className="ui-button ghost"><Search size={14} /> Investigate</button>
+                  <button type="button" className="ui-button primary"><Zap size={14} /> Take Action</button>
+                </div>
+              </section>
+
+              <section className="panel feed-panel">
+                <div className="panel-head compact feed-head">
+                  <div>
+                    <div className="panel-title">Live Activity Feed</div>
+                    <div className="panel-subtitle">Real-time analyst stream with filters and quick drill-down.</div>
+                  </div>
+                  <div className="feed-controls">
+                    <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="ui-select">
+                      {feedSortOptions.map((option) => (
+                        <option key={option.id} value={option.id}>{option.label}</option>
+                      ))}
+                    </select>
+                    <select value={feedFilter} onChange={(event) => setFeedFilter(event.target.value)} className="ui-select">
+                      {['All', 'Critical', 'High', 'Medium', 'Low'].map((item) => (
+                        <option key={item} value={item}>{item}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="feed-list">
+                  {feedItems.length ? feedItems.map((item) => (
                     <button
-                      key={row.id}
+                      key={item.id}
                       type="button"
-                      className={`event-row ${selectedRow?.id === row.id ? 'is-active' : ''}`}
-                      onClick={() => setSelectedRowId(row.id)}
+                      className={`feed-item ${selectedFeed?.id === item.id ? 'is-active' : ''}`}
+                      onClick={() => setSelectedFeedId(item.id)}
+                      title={`${item.event} • ${item.source}`}
                     >
-                      <div className="event-row-main">
-                        <span className="mono">{row.timestamp}</span>
-                        <strong>{row.event}</strong>
+                      <span className={`feed-icon tone-${statusTone[item.severity]}`}>
+                        {item.severity === 'Critical' ? <TriangleAlert size={14} /> : item.severity === 'High' ? <AlertTriangle size={14} /> : item.severity === 'Medium' ? <Layers3 size={14} /> : <ShieldCheck size={14} />}
+                      </span>
+                      <div className="feed-copy">
+                        <div className="feed-row">
+                          <strong>{item.event}</strong>
+                          <span className={`feed-severity tone-${statusTone[item.severity]}`}>{item.severity}</span>
+                        </div>
+                        <p>{item.source} • {item.region} • {item.timestamp}</p>
                       </div>
-                      <div className="event-row-meta">
-                        <span className="mono">{row.source}</span>
-                        <span className={`severity-badge ${row.severity.toLowerCase()}`}>{row.severity}</span>
-                      </div>
+                      <ChevronRight size={14} className="feed-chevron" />
+                    </button>
+                  )) : <div className="empty-state">No active threats detected</div>}
+                </div>
+              </section>
+            </aside>
+          </section>
+
+          <section className="bottom-grid" aria-label="Threat logs and incident details">
+            <article className="panel logs-panel">
+              <div className="panel-head compact logs-head">
+                <div>
+                  <div className="panel-title">Threat Analytics</div>
+                  <div className="panel-subtitle">Interactive visual breakdown of severity, trend, and attack sources.</div>
+                </div>
+                <div className="filters-inline">
+                  {['All', 'Critical', 'High', 'Medium', 'Low'].map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      className={`ui-chip ${severityFilter === item ? 'is-active' : ''}`}
+                      onClick={() => setSeverityFilter(item)}
+                    >
+                      <Filter size={12} /> {item}
                     </button>
                   ))}
-            </div>
-          </div>
-        </article>
-
-        <aside className="panel detail-panel">
-          <div className="panel-head compact">
-            <div>
-              <div className="panel-title">Incident Detail</div>
-              <div className="panel-subtitle">Selected row expanded for fast response.</div>
-            </div>
-            <span className="detail-status">{selectedRow?.status || 'Monitoring'}</span>
-          </div>
-
-          <div className="detail-body">
-            <div className="detail-item">
-              <span>Threat</span>
-              <strong>{selectedRow?.event || 'No incident selected'}</strong>
-            </div>
-            <div className="detail-item">
-              <span>Source</span>
-              <strong className="mono">{selectedRow?.source || '-'}</strong>
-            </div>
-            <div className="detail-item">
-              <span>Region</span>
-              <strong>{selectedRow?.region || '-'}</strong>
-            </div>
-            <div className="detail-item">
-              <span>Indicator</span>
-              <strong className="mono">{selectedRow?.indicator || '-'}</strong>
-            </div>
-            <div className="detail-item">
-              <span>Recommended playbook</span>
-              <strong>{selectedRow?.severity === 'Critical' ? 'Containment + block' : 'Investigate + monitor'}</strong>
-            </div>
-
-            <div className="activity-card">
-              <div className="activity-head">
-                <Globe2 size={14} /> Activity graph
+                </div>
               </div>
-              <svg className="mini-sparkline is-large" viewBox="0 0 104 28" preserveAspectRatio="none" aria-hidden="true">
-                <polyline points={sparklinePoints(sparkSeries)} />
-              </svg>
-              <p>Tempo of incidents remains elevated across the selected region with repeated probe activity.</p>
-            </div>
-          </div>
-        </aside>
+
+              <div className="logs-toolbar">
+                <label className="search-wrap" htmlFor="logs-search">
+                  <Search size={14} />
+                  <input
+                    id="logs-search"
+                    className="ui-field"
+                    value={searchText}
+                    onChange={(event) => setSearchText(event.target.value)}
+                    placeholder="Search timestamp, source IP, threat type, or status"
+                  />
+                </label>
+              </div>
+
+              <div className="analytics-grid">
+                <section className="viz-card">
+                  <div className="viz-head">
+                    <h3>Severity Distribution</h3>
+                    <span className="mono">{severityBreakdown.total} filtered events</span>
+                  </div>
+                  <div className="donut-layout">
+                    <div className="severity-donut" style={{ background: severityBreakdown.gradient }}>
+                      <div className="severity-donut-hole">
+                        <strong>{severityBreakdown.total}</strong>
+                        <span>events</span>
+                      </div>
+                    </div>
+                    <div className="severity-legend">
+                      {severityBreakdown.severityOrder.map((severity) => {
+                        const count = severityBreakdown.counts[severity];
+                        const percent = Math.round((count / severityBreakdown.total) * 100);
+                        return (
+                          <button
+                            key={severity}
+                            type="button"
+                            className={`severity-legend-item ${severityFilter === severity ? 'is-active' : ''}`}
+                            onClick={() => setSeverityFilter((current) => (current === severity ? 'All' : severity))}
+                          >
+                            <i style={{ background: severityBreakdown.severityPalette[severity] }} />
+                            <span>{severity}</span>
+                            <strong className="mono">{count}</strong>
+                            <small className="mono">{Number.isFinite(percent) ? percent : 0}%</small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="viz-card">
+                  <div className="viz-head">
+                    <h3>Telemetry Velocity</h3>
+                    <span className="mono">Last {trendSeries.length} intervals</span>
+                  </div>
+                  <div className="trend-shell">
+                    <svg viewBox="0 0 420 132" className="trend-chart" preserveAspectRatio="none" aria-hidden="true">
+                      <defs>
+                        <linearGradient id="trendAreaFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="rgba(249, 115, 22, 0.48)" />
+                          <stop offset="100%" stopColor="rgba(249, 115, 22, 0.02)" />
+                        </linearGradient>
+                      </defs>
+                      {[0.2, 0.4, 0.6, 0.8].map((ratio) => (
+                        <line
+                          key={ratio}
+                          x1="12"
+                          x2="408"
+                          y1={14 + ratio * 102}
+                          y2={14 + ratio * 102}
+                          className="trend-grid-line"
+                        />
+                      ))}
+                      <path d={trendPaths.areaPath} className="trend-area" fill="url(#trendAreaFill)" />
+                      <path d={trendPaths.linePath} className="trend-line" />
+                      {trendPaths.points.map((point) => (
+                        <circle key={`${point.x}-${point.y}`} cx={point.x} cy={point.y} r="2.8" className="trend-point" />
+                      ))}
+                    </svg>
+                    <div className="trend-meta mono">
+                      <span>Min: {trendPaths.min}</span>
+                      <span>Peak: {trendPaths.max}</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="viz-card">
+                  <div className="viz-head">
+                    <h3>Top Attack Sources</h3>
+                    <span className="mono">Ranked by frequency</span>
+                  </div>
+                  <div className="source-bars">
+                    {topSources.length ? topSources.map((entry) => (
+                      <button
+                        key={entry.source}
+                        type="button"
+                        className="source-row"
+                        onClick={() => setSearchText(entry.source)}
+                        title={`Filter by source ${entry.source}`}
+                      >
+                        <div className="source-row-head">
+                          <span className="mono">{entry.source}</span>
+                          <strong className="mono">{entry.count}</strong>
+                        </div>
+                        <div className="source-row-track">
+                          <span className="source-row-fill" style={{ width: `${entry.percent}%` }} />
+                        </div>
+                      </button>
+                    )) : <div className="empty-state">No sources match current filters.</div>}
+                  </div>
+                </section>
+              </div>
+
+              <div className="event-strip">
+                <div className="viz-head">
+                  <h3>Recent Event Stream</h3>
+                  <span className="mono">Click a row to open Incident Detail</span>
+                </div>
+                <div className="event-row-list">
+                  {isLoading
+                    ? Array.from({ length: 4 }).map((_, index) => (
+                      <div key={`event-skeleton-${index}`} className="event-row">
+                        <div className="skeleton-line" />
+                      </div>
+                    ))
+                    : visualRows.map((row) => (
+                      <button
+                        key={row.id}
+                        type="button"
+                        className={`event-row ${selectedRow?.id === row.id ? 'is-active' : ''}`}
+                        onClick={() => setSelectedRowId(row.id)}
+                      >
+                        <div className="event-row-main">
+                          <span className="mono">{row.timestamp}</span>
+                          <strong>{row.event}</strong>
+                        </div>
+                        <div className="event-row-meta">
+                          <span className="mono">{row.source}</span>
+                          <span className={`severity-badge ${row.severity.toLowerCase()}`}>{row.severity}</span>
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </article>
+
+            <aside className="panel detail-panel">
+              <div className="panel-head compact">
+                <div>
+                  <div className="panel-title">Incident Detail</div>
+                  <div className="panel-subtitle">Selected row expanded for fast response.</div>
+                </div>
+                <span className="detail-status">{selectedRow?.status || 'Monitoring'}</span>
+              </div>
+
+              <div className="detail-body">
+                <div className="detail-item">
+                  <span>Threat</span>
+                  <strong>{selectedRow?.event || 'No incident selected'}</strong>
+                </div>
+                <div className="detail-item">
+                  <span>Source</span>
+                  <strong className="mono">{selectedRow?.source || '-'}</strong>
+                </div>
+                <div className="detail-item">
+                  <span>Region</span>
+                  <strong>{selectedRow?.region || '-'}</strong>
+                </div>
+                <div className="detail-item">
+                  <span>Indicator</span>
+                  <strong className="mono">{selectedRow?.indicator || '-'}</strong>
+                </div>
+                <div className="detail-item">
+                  <span>Recommended playbook</span>
+                  <strong>{selectedRow?.severity === 'Critical' ? 'Containment + block' : 'Investigate + monitor'}</strong>
+                </div>
+
+                <div className="activity-card">
+                  <div className="activity-head">
+                    <Globe2 size={14} /> Activity graph
+                  </div>
+                  <svg className="mini-sparkline is-large" viewBox="0 0 104 28" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline points={sparklinePoints(sparkSeries)} />
+                  </svg>
+                  <p>Tempo of incidents remains elevated across the selected region with repeated probe activity.</p>
+                </div>
+              </div>
+            </aside>
           </section>
         </>
       ) : null}

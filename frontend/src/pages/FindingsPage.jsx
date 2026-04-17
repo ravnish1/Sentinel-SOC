@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDownRight, ArrowUpRight, Download, Search, ShieldAlert, Target } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, Download, Search, ShieldAlert, Target, Brain, Zap } from 'lucide-react';
 import { useThreatEngine } from '../hooks/useThreatEngine';
 import { downloadCsv, sparklinePoints } from './socPageUtils';
+import { CSVUploader } from '../components/ai-insights/CSVUploader';
+import { AIAnalystCard } from '../components/ai-insights/AIAnalystCard';
 import './SocModule.css';
 
 const severityFilters = ['All', 'Critical', 'High', 'Medium', 'Low'];
@@ -21,11 +23,12 @@ function toFinding(log, index) {
     owner: index % 2 === 0 ? 'Platform Sec' : 'AppSec',
     evidence: log.event || 'Suspicious behavior detected',
     region: log.source?.startsWith('185.') ? 'EMEA' : log.source?.startsWith('45.') ? 'North America' : 'Global',
+    aiInsights: log.aiInsights
   };
 }
 
 const FindingsPage = () => {
-  const { logs, isLive } = useThreatEngine();
+  const { logs, aiStats, isLive } = useThreatEngine();
   const [severity, setSeverity] = useState('All');
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState(null);
@@ -47,9 +50,11 @@ const FindingsPage = () => {
   const summary = useMemo(() => ({
     open: filtered.length,
     critical: filtered.filter((finding) => finding.severity === 'Critical').length,
-    exploitability: Math.round(filtered.reduce((acc, finding) => acc + finding.score, 0) / Math.max(1, filtered.length)),
+    exploitability: Math.round(filtered.reduce((acc, finding) => acc + (finding.score || 0), 0) / Math.max(1, filtered.length)),
     exposure: filtered.filter((finding) => finding.status !== 'Monitoring').length,
-  }), [filtered]);
+    aiAnalyzed: aiStats?.totalAnalyzed || 0,
+    avgConf: aiStats?.avgConfidence || 0
+  }), [filtered, aiStats]);
 
   const series = useMemo(() => filtered.slice(0, 6).map((finding) => finding.score), [filtered]);
 
@@ -77,38 +82,44 @@ const FindingsPage = () => {
     <div className="page-shell soc-module">
       <section className="page-hero">
         <div>
-          <p className="page-kicker mono">Investigation / Findings</p>
-          <h1 className="page-title">Findings</h1>
-          <p className="page-copy">Prioritized vulnerabilities, exposure signals, and analyst context for fast triage.</p>
+          <p className="page-kicker mono">AI Engine / Threat Intelligence</p>
+          <h1 className="page-title">Threat Intel Hub</h1>
+          <p className="page-copy">Advanced AI-enriched threat analysis, local Ollama pipeline integration, and prioritized findings.</p>
         </div>
-        <div className="action-group">
+        <div className="action-group" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <div style={{ textAlign: 'right', marginRight: '16px' }}>
+            <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)', fontWeight: 'bold' }}>AI CONFIDENCE</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: '900', color: '#22d3ee' }}>{summary.avgConf}%</div>
+          </div>
           <button type="button" className="ui-button ghost" onClick={handleExport}><Download size={14} /> Export</button>
-          <button type="button" className="ui-button primary"><ShieldAlert size={14} /> Triage Queue</button>
+          <button type="button" className="ui-button primary"><Brain size={14} /> Trigger AI Hunt</button>
         </div>
       </section>
 
       {banner ? <div className="status-banner">{banner}</div> : null}
 
+      <CSVUploader />
+
       <section className="soc-summary-grid">
         <article className="panel soc-summary-card">
-          <div className="soc-summary-label">Open findings</div>
+          <div className="soc-summary-label">Live Indicators</div>
           <div className="soc-summary-value mono">{summary.open}</div>
-          <div className="soc-summary-copy">{isLive ? 'Live telemetry is connected.' : 'Using fallback intelligence.'}</div>
+          <div className="soc-summary-copy">{isLive ? 'Telemetry active.' : 'Internal analysis mesh.'}</div>
         </article>
         <article className="panel soc-summary-card">
-          <div className="soc-summary-label">Critical findings</div>
-          <div className="soc-summary-value mono">{summary.critical}</div>
-          <div className="soc-summary-trend up"><ArrowUpRight size={13} /> Escalation pressure</div>
+          <div className="soc-summary-label">AI Deep Analysis</div>
+          <div className="soc-summary-value mono" style={{ color: '#22d3ee' }}>{summary.aiAnalyzed}</div>
+          <div className="soc-summary-trend up" style={{ color: '#22d3ee' }}><Zap size={13} /> Enrichment active</div>
         </article>
         <article className="panel soc-summary-card">
-          <div className="soc-summary-label">Exploitability score</div>
+          <div className="soc-summary-label">Exploitability risk</div>
           <div className="soc-summary-value mono">{summary.exploitability}</div>
           <svg className="soc-mini-sparkline warn" viewBox="0 0 110 28" preserveAspectRatio="none"><polyline points={sparklinePoints(series)} /></svg>
         </article>
         <article className="panel soc-summary-card">
-          <div className="soc-summary-label">Exposure surface</div>
-          <div className="soc-summary-value mono">{summary.exposure}</div>
-          <div className="soc-summary-trend down"><ArrowDownRight size={13} /> Requires hardening</div>
+          <div className="soc-summary-label">Escalation Pressure</div>
+          <div className="soc-summary-value mono">{summary.critical}</div>
+          <div className="soc-summary-trend up"><ArrowUpRight size={13} /> {summary.critical > 5 ? 'High load' : 'Stable'}</div>
         </article>
       </section>
 
@@ -136,9 +147,9 @@ const FindingsPage = () => {
               <thead>
                 <tr>
                   <th>CVE</th>
-                  <th>Asset</th>
                   <th>Indicator</th>
                   <th>Severity</th>
+                  <th>AI Insights</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -146,9 +157,19 @@ const FindingsPage = () => {
                 {filtered.map((finding) => (
                   <tr key={finding.id} className={selected?.id === finding.id ? 'is-active' : ''} onClick={() => setSelectedId(finding.id)}>
                     <td className="mono">{finding.cve}</td>
-                    <td>{finding.asset}</td>
-                    <td className="mono">{finding.indicator}</td>
+                    <td className="mono" style={{ color: finding.aiInsights ? '#22d3ee' : 'inherit' }}>
+                      {finding.indicator}
+                    </td>
                     <td><span className={`soc-pill ${finding.severity.toLowerCase()}`}>{finding.severity}</span></td>
+                    <td>
+                      {finding.aiInsights ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#22d3ee', fontSize: '0.7rem', fontWeight: 'bold' }}>
+                          <Brain size={10} /> {finding.aiInsights.confidence_score}% Conf.
+                        </div>
+                      ) : (
+                        <span style={{ opacity: 0.3, fontSize: '0.7rem' }}>No AI Data</span>
+                      )}
+                    </td>
                     <td>{finding.status}</td>
                   </tr>
                 ))}
@@ -157,55 +178,61 @@ const FindingsPage = () => {
           </div>
         </article>
 
-        <aside className="panel soc-detail-panel">
-          <div className="soc-section-head">
-            <div>
-              <h2>Finding Detail</h2>
-              <p>Exploitability, owner, and recommended remediation.</p>
-            </div>
-            <span className={`soc-pill ${selected?.severity?.toLowerCase() || 'low'}`}>{selected?.severity || 'Low'}</span>
-          </div>
+        <aside className="soc-detail-panel-stack" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {selected?.aiInsights && (
+            <AIAnalystCard threat={selected} />
+          )}
 
-          <div className="soc-detail-stack" style={{ marginTop: '12px' }}>
-            <div className="soc-detail-row">
+          <article className="panel soc-detail-panel">
+            <div className="soc-section-head">
               <div>
-                <span>Risk score</span>
-                <strong className="mono">{selected?.score ?? '--'}</strong>
+                <h2>Technical Details</h2>
+                <p>Exploitability, owner, and recommended remediation.</p>
               </div>
-              <Target size={14} color="#f97316" />
-            </div>
-            <div className="soc-detail-row">
-              <div>
-                <span>Threat type</span>
-                <strong>{selected?.threatType || '-'}</strong>
-              </div>
-              <div className="mono">{selected?.region || 'Global'}</div>
-            </div>
-            <div className="soc-detail-row">
-              <div>
-                <span>Evidence</span>
-                <strong>{selected?.evidence || '-'}</strong>
-              </div>
-            </div>
-            <div className="soc-detail-row">
-              <div>
-                <span>Recommended action</span>
-                <strong>{selected?.severity === 'Critical' ? 'Patch immediately and isolate exposed assets' : 'Validate exposure and schedule remediation'}</strong>
-              </div>
+              <span className={`soc-pill ${selected?.severity?.toLowerCase() || 'low'}`}>{selected?.severity || 'Low'}</span>
             </div>
 
-            <div className="soc-progress">
-              <div className="soc-summary-label">Mean exploitability</div>
-              <div className="soc-progress-track">
-                <span className="soc-progress-fill" style={{ width: `${Math.min(100, summary.exploitability)}%` }} />
+            <div className="soc-detail-stack" style={{ marginTop: '12px' }}>
+              <div className="soc-detail-row">
+                <div>
+                  <span>Risk score</span>
+                  <strong className="mono">{selected?.score ?? '--'}</strong>
+                </div>
+                <Target size={14} color="#f97316" />
+              </div>
+              <div className="soc-detail-row">
+                <div>
+                  <span>Threat type</span>
+                  <strong>{selected?.threatType || '-'}</strong>
+                </div>
+                <div className="mono">{selected?.region || 'Global'}</div>
+              </div>
+              <div className="soc-detail-row">
+                <div>
+                  <span>Evidence</span>
+                  <strong style={{ fontSize: '0.8rem' }}>{selected?.evidence || '-'}</strong>
+                </div>
+              </div>
+              <div className="soc-detail-row">
+                <div>
+                  <span>Recommended action</span>
+                  <strong>{selected?.severity === 'Critical' ? 'Patch immediately and isolate exposed assets' : 'Validate exposure and schedule remediation'}</strong>
+                </div>
+              </div>
+
+              <div className="soc-progress">
+                <div className="soc-summary-label">Mean exploitability</div>
+                <div className="soc-progress-track">
+                  <span className="soc-progress-fill" style={{ width: `${Math.min(100, summary.exploitability)}%` }} />
+                </div>
+              </div>
+
+              <div className="soc-action-row">
+                <button type="button" className="ui-button primary">Create fix task</button>
+                <button type="button" className="ui-button ghost">Mark reviewed</button>
               </div>
             </div>
-
-            <div className="soc-action-row">
-              <button type="button" className="ui-button primary">Create fix task</button>
-              <button type="button" className="ui-button ghost">Mark reviewed</button>
-            </div>
-          </div>
+          </article>
         </aside>
       </section>
     </div>
